@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Study Tracker — Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    :root{--bg:#0a0a0f;--card:#131320;--border:#1e1e35;--text:#e2e8f0;--sub:#94a3b8;--accent:#8b5cf6;--accent2:#60a5fa;--green:#22c55e;--yellow:#eab308;--red:#ef4444;--pink:#ec4899;--orange:#f97316}
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.6}
+    .nav{background:var(--card);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+    .nav-brand{font-size:1.2rem;font-weight:700;color:var(--accent)}
+    .nav-links{display:flex;gap:20px}
+    .nav-links a{color:var(--sub);text-decoration:none;font-size:0.9rem;transition:.2s}
+    .nav-links a:hover,.nav-links a.active{color:var(--text)}
+    .nav-user{display:flex;align-items:center;gap:10px;font-size:0.85rem}
+    .avatar{width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:600}
+    .container{max-width:1200px;margin:0 auto;padding:24px}
+    .grid{display:grid;gap:20px}
+    .grid-2{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:repeat(3,1fr)}.grid-4{grid-template-columns:repeat(4,1fr)}
+    @media(max-width:768px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px}
+    .card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .card-title{font-size:1rem;font-weight:600}
+    .btn{padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-size:0.85rem;font-weight:500;transition:.2s}
+    .btn-accent{background:var(--accent);color:#fff}.btn-accent:hover{background:#7c3aed}
+    .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}.btn-outline:hover{background:var(--border)}
+    .btn-sm{padding:4px 10px;font-size:0.75rem}
+    .btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#dc2626}
+    .stat-value{font-size:2rem;font-weight:800}
+    .stat-label{font-size:0.8rem;color:var(--sub);margin-top:4px}
+    .xp-bar{height:8px;background:rgba(255,255,255,.1);border-radius:4px;overflow:hidden;margin-top:8px}
+    .xp-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:4px;transition:width .5s}
+
+    .pomodoro-circle{width:180px;height:180px;border-radius:50%;border:6px solid var(--border);display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
+    .pomodoro-circle .time{font-size:3rem;font-weight:800}
+    .pomodoro-circle .label{font-size:0.8rem;color:var(--sub);position:absolute;bottom:30px}
+    .pomodoro-controls{display:flex;gap:10px;justify-content:center}
+    .pomo-btn{padding:12px 24px;border-radius:10px;border:none;font-weight:600;cursor:pointer;font-size:0.9rem;transition:.2s}
+    .pomo-start{background:var(--green);color:#000}.pomo-pause{background:var(--yellow);color:#000}
+    .pomo-reset{background:transparent;border:1px solid var(--border);color:var(--text)}
+
+    .log-item,.lb-item{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}
+    .log-item:last-child,.lb-item:last-child{border-bottom:none}
+    .sub-tag{font-size:0.8rem;padding:2px 8px;border-radius:6px;background:rgba(139,92,246,.15);color:var(--accent)}
+
+    .lb-rank{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.75rem}
+    .lb-rank-1{background:#fbbf24;color:#000}.lb-rank-2{background:#94a3b8;color:#000}.lb-rank-3{background:#d97706;color:#000}
+
+    .exam-card{padding:14px;border-radius:10px;border:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;transition:.2s}
+    .exam-card:hover{border-color:var(--accent)}
+    .exam-days{font-size:1.5rem;font-weight:800;min-width:60px;text-align:center}
+    .exam-days-urgent{color:var(--red)}.exam-days-warning{color:var(--orange)}.exam-days-ok{color:var(--green)}
+
+    .subject-break{display:flex;align-items:center;gap:8px;margin:6px 0}
+    .subject-break .bar{flex:1;height:8px;background:rgba(255,255,255,.1);border-radius:4px;overflow:hidden}
+    .subject-break .fill{height:100%;border-radius:4px}
+
+    .modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center}
+    .modal.show{display:flex}
+    .modal-content{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:32px;max-width:440px;width:90%}
+    .modal h2{font-size:1.2rem;margin-bottom:20px}
+    .form-group{margin-bottom:16px}
+    .form-group label{display:block;font-size:0.8rem;color:var(--sub);margin-bottom:4px}
+    .form-group input,.form-group select{width:100%;padding:10px;border-radius:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);font-size:0.9rem}
+    .form-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+
+    .toast{position:fixed;top:20px;right:20px;padding:16px 24px;border-radius:12px;font-weight:600;z-index:1000;opacity:0;transform:translateY(-20px);transition:.3s}
+    .toast.show{opacity:1;transform:translateY(0)}
+    .toast-success{background:var(--green);color:#000}
+    .toast-levelup{background:linear-gradient(135deg,var(--accent),var(--pink));color:#fff}
+  </style>
+</head>
+<body>
+<div class="nav">
+  <div class="nav-brand">📝 Study Tracker</div>
+  <div class="nav-links">
+    <a href="/study/dashboard" class="active">Dashboard</a>
+    <a href="/study/analytics">Analytics</a>
+    <a href="/study/logout" style="color:var(--red)">Logout</a>
+  </div>
+  <div class="nav-user">
+    <div class="avatar">{{ user.first_name[0] if user.first_name else 'S' }}</div>
+    <span>{{ user.first_name or 'Student' }}</span>
+  </div>
+</div>
+
+<div class="container">
+  <!-- Stats -->
+  <div class="grid grid-4" style="margin-bottom:20px">
+    <div class="card" style="text-align:center">
+      <div style="font-size:1.5rem">{{ rank_emoji }}</div>
+      <div class="stat-value" style="font-size:1.2rem;margin-top:4px">{{ rank }}</div>
+      <div class="stat-label">Lv.{{ progress.level }} · {{ user.xp }} XP</div>
+      <div class="xp-bar"><div class="xp-fill" style="width:{{ progress.pct }}%"></div></div>
+      <div style="font-size:0.7rem;color:var(--sub);margin-top:4px">{{ progress.xp_in_level }}/{{ progress.xp_needed }} XP</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:1.5rem">📊</div>
+      <div class="stat-value">{{ fmt_duration(today_minutes) }}</div>
+      <div class="stat-label">Today</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:1.5rem">🔥</div>
+      <div class="stat-value">{{ user.current_streak }}</div>
+      <div class="stat-label">Day Streak</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:1.5rem">📅</div>
+      <div class="stat-value">{{ fmt_duration(week_minutes) }}</div>
+      <div class="stat-label">This Week</div>
+    </div>
+  </div>
+
+  <div class="grid grid-2">
+    <!-- Pomodoro -->
+    <div class="card" style="text-align:center">
+      <div class="card-header"><div class="card-title">🍅 Pomodoro Timer</div></div>
+      <div class="pomodoro-circle"><div><div class="time" id="timerDisplay">25:00</div><div class="label" id="timerLabel">Focus</div></div></div>
+      <div class="pomodoro-controls">
+        <button class="pomo-btn pomo-start" id="btnStart" onclick="startTimer()">▶ Start</button>
+        <button class="pomo-btn pomo-pause" id="btnPause" onclick="pauseTimer()" style="display:none">⏸ Pause</button>
+        <button class="pomo-btn pomo-reset" id="btnReset" onclick="resetTimer()">↺ Reset</button>
+      </div>
+      <div style="margin-top:12px;font-size:0.8rem;color:var(--sub)">
+        <span id="sessionCount">{{ today_minutes // 25 }}</span> sessions today · +25 XP each
+      </div>
+    </div>
+
+    <!-- Subject Breakdown -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">📚 Subject Breakdown</div>
+        <a href="/study/analytics" style="font-size:0.8rem;color:var(--accent)">Full Analytics →</a>
+      </div>
+      {% if subjects %}
+        {% for s in subjects %}
+        <div class="subject-break">
+          <span style="width:110px;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.subject }}</span>
+          <div class="bar"><div class="fill" style="width:{{ (s.t / user.total_minutes * 100) if user.total_minutes else 0 }}%;background:{{ ['#8b5cf6','#60a5fa','#22c55e','#eab308','#ec4899','#f97316'][loop.index0 % 6] }}"></div></div>
+          <span style="font-size:0.8rem;color:var(--sub);min-width:55px;text-align:right">{{ fmt_duration(s.t) }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p style="color:var(--sub);text-align:center;padding:20px">No study logged yet. Start a pomodoro!</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="grid grid-3" style="margin-top:20px">
+    <!-- Recent -->
+    <div class="card">
+      <div class="card-header"><div class="card-title">🕐 Recent Activity</div></div>
+      {% if recent %}
+        {% for log in recent %}
+        <div class="log-item">
+          <div><span class="sub-tag">{{ log.subject }}</span> {{ fmt_duration(log.duration_minutes) }}</div>
+          <div style="font-size:0.75rem;color:var(--sub)">{{ log.logged_at[11:16] if log.logged_at else '' }}</div>
+        </div>
+        {% endfor %}
+      {% else %}<p style="color:var(--sub);text-align:center;padding:20px">No activity yet</p>{% endif %}
+    </div>
+
+    <!-- Exam Countdown -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">📅 Exam Countdown</div>
+        <button class="btn btn-sm btn-accent" onclick="openExamModal()">+ Add Exam</button>
+      </div>
+      <div id="examList">
+        {% if exams %}
+          {% for e in exams %}
+          {% set days_left = (datetime.strptime(e.exam_date,'%Y-%m-%d').date() - today).days %}
+          <div class="exam-card" id="exam-{{ e.id }}">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:0.9rem">{{ e.exam_name }}</div>
+              <div style="font-size:0.75rem;color:var(--sub)">{{ e.subject }} · {{ e.syllabus_hours }}h syllabus · {{ e.exam_date }}</div>
+            </div>
+            <div class="exam-days {{ 'exam-days-urgent' if days_left<=7 else 'exam-days-warning' if days_left<=21 else 'exam-days-ok' }}">
+              {{ days_left }}<br><span style="font-size:0.65rem">days</span>
+            </div>
+            <button class="btn btn-sm btn-danger" style="margin-left:8px" onclick="deleteExam({{ e.id }})">✕</button>
+          </div>
+          {% endfor %}
+        {% else %}
+          <p style="color:var(--sub);text-align:center;padding:20px">No exams added. Click "+ Add Exam"!</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Leaderboard -->
+    <div class="card">
+      <div class="card-header"><div class="card-title">🏆 Leaderboard</div></div>
+      {% if leaderboard %}
+        {% for p in leaderboard[:6] %}
+        <div class="lb-item" style="{% if p.user_id == user.user_id %}background:rgba(139,92,246,.1);border-radius:8px;padding:8px{% endif %}">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="lb-rank {{ 'lb-rank-1' if loop.index==1 else 'lb-rank-2' if loop.index==2 else 'lb-rank-3' if loop.index==3 else '' }}" style="{% if loop.index>3 %}background:var(--border){% endif %}">{{ loop.index }}</div>
+            <span style="font-size:0.85rem">{{ p.first_name or ('User' ~ p.user_id) }}</span>
+          </div>
+          <div style="font-size:0.8rem;font-weight:600">{{ p.xp }} XP <span style="color:var(--sub);font-weight:400">Lv.{{ p.level }}</span></div>
+        </div>
+        {% endfor %}
+      {% else %}<p style="color:var(--sub);text-align:center;padding:20px">No data yet</p>{% endif %}
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="card" style="margin-top:20px">
+    <div class="card-header"><div class="card-title">⚡ Quick Actions</div></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <select id="qlSubject" style="padding:8px 12px;border-radius:8px;background:var(--bg);color:var(--text);border:1px solid var(--border)">
+        <option>OOP</option><option>DSA</option><option>TW</option><option>Discrete Math</option><option>IS</option><option>Pomodoro</option><option>Other</option>
+      </select>
+      <input id="qlMinutes" type="number" value="60" min="5" max="480" style="padding:8px 12px;border-radius:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);width:80px">
+      <span style="color:var(--sub);font-size:0.85rem">min</span>
+      <button class="btn btn-accent" onclick="quickLog()">📝 Log Study</button>
+      <button class="btn btn-outline" onclick="aiAnalyze()">🤖 Analyze Progress</button>
+      <button class="btn btn-outline" onclick="openExamModal()">📅 Add Exam</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Exam Modal -->
+<div class="modal" id="examModal">
+  <div class="modal-content">
+    <h2>📅 Add Exam</h2>
+    <div class="form-group">
+      <label>Subject</label>
+      <input id="examSubject" placeholder="e.g. OOP">
+    </div>
+    <div class="form-group">
+      <label>Exam Name</label>
+      <input id="examName" placeholder="e.g. Final Exam">
+    </div>
+    <div class="form-group">
+      <label>Date (YYYY-MM-DD)</label>
+      <input id="examDate" type="date">
+    </div>
+    <div class="form-group">
+      <label>Syllabus Hours</label>
+      <input id="examHours" type="number" value="0" min="0" step="0.5" placeholder="e.g. 40">
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="closeExamModal()">Cancel</button>
+      <button class="btn btn-accent" onclick="addExamWeb()">Add Exam</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// Pomodoro
+let timerInterval, timerSeconds=1500, timerRunning=false, timerMode='focus';
+const FOCUS=1500, BREAK=300;
+
+function updateTimer(){const m=Math.floor(timerSeconds/60),s=timerSeconds%60;document.getElementById('timerDisplay').textContent=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')}
+function startTimer(){if(!timerRunning){timerRunning=true;document.getElementById('btnStart').style.display='none';document.getElementById('btnPause').style.display='inline-block';timerInterval=setInterval(()=>{if(timerSeconds>0){timerSeconds--;updateTimer()}else completeSession()},1000)}}
+function pauseTimer(){timerRunning=false;clearInterval(timerInterval);document.getElementById('btnStart').style.display='inline-block';document.getElementById('btnPause').style.display='none'}
+function resetTimer(){pauseTimer();timerSeconds=timerMode==='focus'?FOCUS:BREAK;updateTimer()}
+
+async function completeSession(){
+  clearInterval(timerInterval);timerRunning=false;
+  const mins=timerMode==='focus'?25:5;
+  try{
+    const r=await fetch('/study/api/pomodoro/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({minutes:mins})});
+    const d=await r.json();
+    if(d.ok){showToast(d.level_up?`🎉 LEVEL UP! Lv.${d.new_level} ${d.rank}!`:`✅ +${d.xp_earned} XP!`,d.level_up);document.getElementById('sessionCount').textContent=parseInt(document.getElementById('sessionCount').textContent)+1}
+  }catch(e){showToast('Error',false)}
+  timerMode=timerMode==='focus'?'break':'focus';timerSeconds=timerMode==='focus'?FOCUS:BREAK;updateTimer()
+  document.getElementById('timerLabel').textContent=timerMode==='focus'?'Focus':'Break'
+  document.getElementById('btnStart').style.display='inline-block';document.getElementById('btnPause').style.display='none'
+}
+
+// Quick Log
+async function quickLog(){
+  const s=document.getElementById('qlSubject').value,m=parseInt(document.getElementById('qlMinutes').value);
+  if(!m||m<1)return;
+  try{
+    const r=await fetch('/study/api/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:s,minutes:m})});
+    const d=await r.json();
+    if(d.ok)showToast(d.level_up?`🎉 LEVEL UP!`:`✅ +${d.xp_earned} XP`,d.level_up);else showToast(d.error||'Error',false)
+  }catch(e){showToast('Error',false)}
+}
+
+// Toast
+function showToast(msg,lvl){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+(lvl?'toast-levelup':'toast-success')+' show';setTimeout(()=>t.className='toast',3000)}
+
+// AI Analyze
+async function aiAnalyze(){
+  showToast('🤖 Analyzing...',false);
+  try{
+    const r=await fetch('/study/api/coach/analyze',{method:'POST'});
+    const d=await r.json();
+    if(d.analysis){const w=window.open('','_blank','width=500,height=700');w.document.write('<pre style="font-family:Inter,sans-serif;padding:20px;white-space:pre-wrap;background:#0a0a0f;color:#e2e8f0;line-height:1.7;font-size:14px">'+d.analysis+'</pre>')}
+    else showToast(d.error||'No data yet',false)
+  }catch(e){showToast('Error',false)}
+}
+
+// Exam Modal
+function openExamModal(){document.getElementById('examModal').classList.add('show')}
+function closeExamModal(){document.getElementById('examModal').classList.remove('show')}
+
+async function addExamWeb(){
+  const s=document.getElementById('examSubject').value.trim();
+  const n=document.getElementById('examName').value.trim();
+  const d=document.getElementById('examDate').value;
+  const h=parseFloat(document.getElementById('examHours').value)||0;
+  if(!s||!n||!d){showToast('Fill all fields!',false);return}
+  try{
+    const r=await fetch('/study/api/exams',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:s,name:n,date:d,hours:h})});
+    if((await r.json()).ok){closeExamModal();location.reload()}
+    else showToast('Error',false)
+  }catch(e){showToast('Error',false)}
+}
+
+async function deleteExam(id){
+  if(!confirm('Delete this exam?'))return;
+  try{
+    await fetch('/study/api/exams/'+id,{method:'DELETE'});
+    document.getElementById('exam-'+id)?.remove();
+    showToast('Exam deleted',false)
+  }catch(e){showToast('Error',false)}
+}
+
+// Close modal on outside click
+document.getElementById('examModal').addEventListener('click',function(e){if(e.target===this)closeExamModal()})
+</script>
+</body>
+</html>

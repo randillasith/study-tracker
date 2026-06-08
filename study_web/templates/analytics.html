@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics — Study Tracker</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    :root {
+      --bg: #0a0a0f; --card: #131320; --border: #1e1e35;
+      --text: #e2e8f0; --sub: #94a3b8; --accent: #8b5cf6;
+      --accent2: #60a5fa; --green: #22c55e;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+    .nav { background:var(--card); border-bottom:1px solid var(--border); padding:12px 24px; display:flex; align-items:center; justify-content:space-between; }
+    .nav-brand { font-size:1.2rem; font-weight:700; color:var(--accent); }
+    .nav-links { display:flex; gap:20px; }
+    .nav-links a { color:var(--sub); text-decoration:none; font-size:0.9rem; }
+    .nav-links a:hover, .nav-links a.active { color:var(--text); }
+    .container { max-width:1200px; margin:0 auto; padding:24px; }
+    .grid { display:grid; gap:20px; }
+    .grid-2 { grid-template-columns:1fr 1fr; }
+    .grid-3 { grid-template-columns:repeat(3,1fr); }
+    @media(max-width:768px){.grid-2,.grid-3{grid-template-columns:1fr}}
+    .card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:24px; }
+    .card-title { font-size:1rem; font-weight:600; margin-bottom:16px; }
+    .stat { text-align:center; padding:20px; }
+    .stat-value { font-size:2rem; font-weight:800; }
+    .stat-label { font-size:0.8rem; color:var(--sub); margin-top:4px; }
+    canvas { max-height:300px; }
+    .sub-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border); }
+    .sub-row:last-child { border-bottom:none; }
+  </style>
+</head>
+<body>
+<div class="nav">
+  <div class="nav-brand">📊 Analytics</div>
+  <div class="nav-links">
+    <a href="/study/dashboard">Dashboard</a>
+    <a href="/study/analytics" class="active">Analytics</a>
+    <a href="/study/logout" style="color:#ef4444">Logout</a>
+  </div>
+</div>
+
+<div class="container">
+  <!-- Stats Row -->
+  <div class="grid grid-3" style="margin-bottom:20px">
+    <div class="card stat">
+      <div class="stat-value">{{ fmt_duration(week_minutes) }}</div>
+      <div class="stat-label">This Week</div>
+    </div>
+    <div class="card stat">
+      <div class="stat-value">{{ fmt_duration(month_minutes) }}</div>
+      <div class="stat-label">This Month</div>
+    </div>
+    <div class="card stat">
+      <div class="stat-value">🔥 {{ current_streak }} / {{ longest_streak }}</div>
+      <div class="stat-label">Current Streak / Best</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="grid grid-2" style="margin-bottom:20px">
+    <div class="card">
+      <div class="card-title">📊 Weekly Study Time</div>
+      <canvas id="weekChart"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-title">📈 Monthly Overview</div>
+      <canvas id="monthChart"></canvas>
+    </div>
+  </div>
+
+  <div class="grid grid-2">
+    <!-- Subject Hours (Week) -->
+    <div class="card">
+      <div class="card-title">📚 Subject Hours (This Week)</div>
+      {% if week_subs %}
+        {% for s in week_subs %}
+        <div class="sub-row">
+          <span style="font-weight:500">{{ s.subject }}</span>
+          <span style="color:var(--sub)">{{ fmt_duration(s.t) }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p style="color:var(--sub);text-align:center;padding:40px">No data this week</p>
+      {% endif %}
+    </div>
+
+    <!-- All-Time Subjects -->
+    <div class="card">
+      <div class="card-title">🏆 All-Time Subject Breakdown</div>
+      {% if all_subs %}
+        {% for s in all_subs %}
+        <div class="sub-row">
+          <div><span style="font-weight:500">{{ s.subject }}</span><br><span style="font-size:0.75rem;color:var(--sub)">{{ s.n }} sessions</span></div>
+          <span style="color:var(--sub)">{{ fmt_duration(s.t) }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p style="color:var(--sub);text-align:center;padding:40px">No data yet</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+const C = ['#8b5cf6','#60a5fa','#22c55e','#eab308','#ec4899','#f97316','#06b6d4'];
+
+new Chart(document.getElementById('weekChart'), {
+  type:'bar',
+  data:{
+    labels: JSON.parse('{{ week_labels | safe }}'),
+    datasets:[{label:'Minutes',data:JSON.parse('{{ week_values | safe }}'),
+      backgroundColor:C[0],borderRadius:8}]
+  },
+  options:{
+    responsive:true, plugins:{legend:{display:false}},
+    scales:{y:{grid:{color:'#1e1e35'},ticks:{color:'#94a3b8'}},x:{grid:{display:false},ticks:{color:'#94a3b8'}}}
+  }
+});
+
+new Chart(document.getElementById('monthChart'), {
+  type:'line',
+  data:{
+    labels: JSON.parse('{{ month_labels | safe }}'),
+    datasets:[{label:'Minutes',data:JSON.parse('{{ month_values | safe }}'),
+      borderColor:C[3],backgroundColor:C[3]+'20',fill:true,tension:0.4,pointRadius:2}]
+  },
+  options:{
+    responsive:true, plugins:{legend:{display:false}},
+    scales:{y:{grid:{color:'#1e1e35'},ticks:{color:'#94a3b8'}},x:{grid:{display:false},ticks:{color:'#94a3b8',maxTicksLimit:15}}}
+  }
+});
+</script>
+</body>
+</html>

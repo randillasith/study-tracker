@@ -1,0 +1,17 @@
+[Unit]
+Description=Study Tracker Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/study-tracker
+EnvironmentFile=/home/ubuntu/study-tracker/.env
+ExecStart=/home/ubuntu/study-tracker/.venv/bin/python -m study_bot.bot
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Study Tracker — Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      overflow: hidden;
+    }
+    /* Animated background */
+    .bg-anim {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; z-index: 0;
+    }
+    .bg-anim span {
+      position: absolute;
+      display: block;
+      width: 20px; height: 20px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 50%;
+      animation: float 15s infinite;
+    }
+    .bg-anim span:nth-child(1) { left: 10%; animation-delay: 0s; width: 60px; height: 60px; }
+    .bg-anim span:nth-child(2) { left: 25%; animation-delay: 2s; width: 30px; height: 30px; }
+    .bg-anim span:nth-child(3) { left: 45%; animation-delay: 4s; width: 80px; height: 80px; }
+    .bg-anim span:nth-child(4) { left: 65%; animation-delay: 1s; width: 40px; height: 40px; }
+    .bg-anim span:nth-child(5) { left: 80%; animation-delay: 3s; width: 50px; height: 50px; }
+    .bg-anim span:nth-child(6) { left: 90%; animation-delay: 5s; width: 25px; height: 25px; }
+    @keyframes float {
+      0% { transform: translateY(100vh) scale(0); opacity: 0; }
+      10% { opacity: 1; }
+      90% { opacity: 1; }
+      100% { transform: translateY(-100vh) scale(1); opacity: 0; }
+    }
+
+    .login-container {
+      position: relative; z-index: 1;
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 24px;
+      padding: 48px 40px;
+      max-width: 440px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.4);
+    }
+    .logo-icon {
+      font-size: 64px; margin-bottom: 16px;
+      filter: drop-shadow(0 0 20px rgba(139,92,246,0.5));
+    }
+    h1 {
+      font-size: 2rem; font-weight: 800;
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #94a3b8; font-size: 0.95rem; margin-bottom: 32px;
+      line-height: 1.5;
+    }
+    .features {
+      display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+      margin-bottom: 36px;
+    }
+    .feature-tag {
+      background: rgba(139,92,246,0.15);
+      border: 1px solid rgba(139,92,246,0.3);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 0.8rem;
+      color: #c4b5fd;
+    }
+    .login-btn-wrapper {
+      display: flex; justify-content: center;
+    }
+    .footer-text {
+      margin-top: 24px;
+      font-size: 0.75rem; color: #64748b;
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-anim">
+    <span></span><span></span><span></span><span></span><span></span><span></span>
+  </div>
+
+  <div class="login-container">
+    <div class="logo-icon">📝</div>
+    <h1>Study Tracker</h1>
+    <p class="subtitle">
+      Log your study hours, build streaks, earn XP,<br>
+      and level up your academic journey.
+    </p>
+    <div class="features">
+      <span class="feature-tag">📊 Stats</span>
+      <span class="feature-tag">🎮 XP & Levels</span>
+      <span class="feature-tag">🔥 Streaks</span>
+      <span class="feature-tag">📈 Charts</span>
+    </div>
+    <div class="login-btn-wrapper">
+      <script async src="https://telegram.org/js/telegram-widget.js?22"
+        data-telegram-login="{{ bot_username }}"
+        data-size="large"
+        data-radius="12"
+        data-auth-url="https://kiritho.duckdns.org/study/auth/telegram"
+        data-request-access="write">
+      </script>
+    </div>
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.1)">
+      <p style="font-size:0.8rem;color:#94a3b8;margin-bottom:10px">— or login via Bot —</p>
+      <a href="https://t.me/KirithoStudybot?start=login" target="_blank"
+         style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#8b5cf6,#60a5fa);color:#fff;border-radius:10px;text-decoration:none;font-weight:600;font-size:0.9rem;transition:.2s"
+         onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+        🤖 Login via @KirithoStudybot
+      </a>
+      <p style="font-size:0.7rem;color:#64748b;margin-top:8px">Open in Telegram → tap Start → get login link</p>
+    </div>
+    <p class="footer-text">Powered by Telegram • Secure Login</p>
+  </div>
+</body>
+</html>
