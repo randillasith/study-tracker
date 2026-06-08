@@ -113,6 +113,27 @@
     </div>
   </div>
 
+  <!-- Today's Study Mission -->
+  <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg,rgba(139,92,246,.18),rgba(96,165,250,.1));border-color:rgba(139,92,246,.35)">
+    <div class="card-header">
+      <div class="card-title">🎯 Today's Study Mission</div>
+      <div style="font-size:.85rem;color:var(--sub)">{{ fmt_duration(mission.today_minutes) }} / {{ fmt_duration(mission.target_minutes) }}</div>
+    </div>
+    <div class="xp-bar" style="height:10px;margin-bottom:14px"><div class="xp-fill" style="width:{{ (mission.today_minutes / mission.target_minutes * 100) if mission.target_minutes else 0 }}%"></div></div>
+    <div class="grid grid-3">
+      {% for task in mission.tasks %}
+      <div style="padding:12px;border:1px solid var(--border);border-radius:12px;background:rgba(0,0,0,.16)">
+        <div style="font-weight:700">{{ loop.index }}. {{ task.subject }}</div>
+        <div style="font-size:1.35rem;font-weight:800;color:var(--accent2)">{{ task.minutes }} min</div>
+        <div style="font-size:.78rem;color:var(--sub)">{{ task.reason }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div style="margin-top:12px;font-size:.85rem;color:var(--sub)">
+      {% if mission.remaining_minutes > 0 %}Remaining today: <b>{{ fmt_duration(mission.remaining_minutes) }}</b>{% else %}✅ Mission completed for today — beautiful work.{% endif %}
+    </div>
+  </div>
+
   <div class="grid grid-2">
     <!-- Pomodoro -->
     <div class="card" style="text-align:center">
@@ -169,16 +190,19 @@
         <button class="btn btn-sm btn-accent" onclick="openExamModal()">+ Add Exam</button>
       </div>
       <div id="examList">
-        {% if exams %}
-          {% for e in exams %}
-          {% set days_left = (datetime.strptime(e.exam_date,'%Y-%m-%d').date() - today).days %}
+        {% if exam_progress %}
+          {% for e in exam_progress %}
+          {% set days_left = e.days_left if e.days_left is not none else 9999 %}
           <div class="exam-card" id="exam-{{ e.id }}">
             <div style="flex:1">
               <div style="font-weight:600;font-size:0.9rem">{{ e.exam_name }}</div>
-              <div style="font-size:0.75rem;color:var(--sub)">{{ e.subject }} · {{ e.syllabus_hours }}h syllabus · {{ e.exam_date }}</div>
+              <div style="font-size:0.75rem;color:var(--sub)">
+                {{ e.subject }} · {{ e.studied_hours }}h done · {{ e.remaining_hours }}h left · {{ e.hours_per_day }}h/day needed
+              </div>
+              <div class="xp-bar" style="margin-top:6px"><div class="xp-fill" style="width:{{ (e.studied_hours / e.syllabus_hours * 100) if e.syllabus_hours else 0 }}%"></div></div>
             </div>
             <div class="exam-days {{ 'exam-days-urgent' if days_left<=7 else 'exam-days-warning' if days_left<=21 else 'exam-days-ok' }}">
-              {{ days_left }}<br><span style="font-size:0.65rem">days</span>
+              {{ e.days_left if e.days_left is not none else '?' }}<br><span style="font-size:0.65rem">days</span>
             </div>
             <button class="btn btn-sm btn-danger" style="margin-left:8px" onclick="deleteExam({{ e.id }})">✕</button>
           </div>
@@ -265,9 +289,9 @@ async function completeSession(){
   clearInterval(timerInterval);timerRunning=false;
   const mins=timerMode==='focus'?25:5;
   try{
-    const r=await fetch('/study/api/pomodoro/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({minutes:mins})});
+    const r=await fetch('/study/api/pomodoro/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({minutes:mins,type:timerMode})});
     const d=await r.json();
-    if(d.ok){showToast(d.level_up?`🎉 LEVEL UP! Lv.${d.new_level} ${d.rank}!`:`✅ +${d.xp_earned} XP!`,d.level_up);document.getElementById('sessionCount').textContent=parseInt(document.getElementById('sessionCount').textContent)+1}
+    if(d.ok){showToast(d.session_type==='break'?'☕ Break completed — no XP counted':(d.level_up?`🎉 LEVEL UP! Lv.${d.new_level} ${d.rank}!`:`✅ +${d.xp_earned} XP!`),d.level_up); if(d.session_type==='focus')document.getElementById('sessionCount').textContent=parseInt(document.getElementById('sessionCount').textContent)+1}
   }catch(e){showToast('Error',false)}
   timerMode=timerMode==='focus'?'break':'focus';timerSeconds=timerMode==='focus'?FOCUS:BREAK;updateTimer()
   document.getElementById('timerLabel').textContent=timerMode==='focus'?'Focus':'Break'

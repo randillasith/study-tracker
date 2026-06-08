@@ -21,8 +21,11 @@ XP_PER_HOUR = 100
 # ── DB Helpers ─────────────────────────────────────────────
 
 def get_db():
-    db = sqlite3.connect(DB_PATH)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    db = sqlite3.connect(DB_PATH, timeout=10)
     db.row_factory = sqlite3.Row
+    db.execute("PRAGMA busy_timeout=10000")
+    db.execute("PRAGMA journal_mode=WAL")
     return db
 
 def ensure_user(uid, uname, fname):
@@ -114,7 +117,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if ctx.args and ctx.args[0]=="login":
         t = secrets.token_urlsafe(16)
         db2 = get_db()
-        db2.execute("INSERT OR REPLACE INTO login_tokens (token,user_id,used) VALUES (?,?,0)",(t,user.id))
+        db2.execute("INSERT OR REPLACE INTO login_tokens (token,user_id,created_at,used) VALUES (?,?,datetime('now'),0)",(t,user.id))
         db2.commit(); db2.close()
         await update.message.reply_text(
             f"🔐 *One-time Login*\n\n[Click to open Dashboard](https://kiritho.duckdns.org/study/auth/bot/{t})\n\n⏰ Link expires after use.",
@@ -160,6 +163,8 @@ async def log_study(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(result, parse_mode="Markdown")
 
 def do_log(uid, uname, fname, subj, mins):
+    if not subj or mins < 1 or mins > 480:
+        return "❌ *Invalid study time.* Please log between 1 and 480 minutes."
     db = get_db()
     ensure_user(uid, uname, fname)
     today = date.today().isoformat()
@@ -324,82 +329,102 @@ async def addexam_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── AI Study Plan ──────────────────────────────────────────
 
-async def plan_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
+def build_study_plan_text(uid):
     db = get_db()
-    u = db.execute("SELECT * FROM users WHERE user_id=?",(uid,)).fetchone()
-    subs = db.execute("SELECT subject, SUM(duration_minutes) as t FROM study_logs WHERE user_id=? GROUP BY subject ORDER BY t DESC",(uid,)).fetchall()
-    exams = db.execute("SELECT * FROM exams WHERE user_id=? ORDER BY exam_date",(uid,)).fetchall()
+    u = db.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
+    subs = db.execute("SELECT subject, SUM(duration_minutes) as t FROM study_logs WHERE user_id=? GROUP BY subject ORDER BY t DESC", (uid,)).fetchall()
+    exams = db.execute("SELECT * FROM exams WHERE user_id=? ORDER BY exam_date", (uid,)).fetchall()
+    today_row = db.execute("SELECT COALESCE(total_minutes,0) AS m FROM daily_stats WHERE user_id=? AND date=?", (uid, date.today().isoformat())).fetchone()
     db.close()
-
+    if not u:
+        return "🤖 *Study Plan*\n\nUse /start first so I can create your profile."
     if not subs and not exams:
-        await update.message.reply_text(
-            "🤖 *Study Plan*\n\nNot enough data yet! Log some study time and add exams first.",
-            parse_mode="Markdown")
-        return
+        return "🤖 *Study Plan*\n\nNot enough data yet! Log study time and add exams first."
 
-    await update.message.reply_text("🤖 *Analyzing your progress...*", parse_mode="Markdown")
-
-    # Build analysis (rule-based + optional Gemini)
-    total = u["total_minutes"]
-    analysis = f"📊 *AI Study Coach*\n\n"
-    analysis += f"⏱️ Total: {fmt_duration(total)} | 🔥 {u['current_streak']} day streak\n"
+    total = u["total_minutes"] or 0
+    today_m = today_row["m"] if today_row else 0
+    target = max(60, min(180, int((total / 7) if total else 90)))
+    analysis = "📊 *AI Study Coach*\n\n"
+    analysis += f"⏱️ Total: {fmt_duration(total)} | Today: {fmt_duration(today_m)} | 🔥 {u['current_streak']} day streak\n"
     analysis += f"🏅 {get_rank(xp_to_level(u['xp']))} · Lv.{xp_to_level(u['xp'])}\n\n"
+
+    if exams:
+        analysis += "*📅 Exam Prep:*\n"
+        for e in exams[:5]:
+            try:
+                days_left = (datetime.strptime(e["exam_date"], "%Y-%m-%d").date() - date.today()).days
+            except Exception:
+                days_left = "?"
+            if isinstance(days_left, int) and days_left > 0 and e["syllabus_hours"] > 0:
+                daily = round(e["syllabus_hours"] / days_left, 1)
+                analysis += f"  • {e['subject']}: {days_left}d left → ~{daily}h/day for {e['exam_name']}\n"
+            else:
+                analysis += f"  • {e['subject']}: {days_left} days left for {e['exam_name']}\n"
+        analysis += "\n"
 
     if subs:
         analysis += "*Subject Split:*\n"
         for s in subs[:5]:
-            pct = round(s["t"]/total*100,1) if total else 0
+            pct = round(s["t"] / total * 100, 1) if total else 0
             analysis += f"  • {s['subject']}: {fmt_duration(s['t'])} ({pct}%)\n"
 
+    analysis += "\n*🎯 Today's Study Mission:*\n"
     if exams:
-        analysis += "\n*📅 Exam Prep:*\n"
-        for e in exams:
-            try:
-                days_left = (datetime.strptime(e["exam_date"],"%Y-%m-%d").date()-date.today()).days
-            except: days_left="?"
-            if isinstance(days_left,int) and e["syllabus_hours"]>0 and days_left>0:
-                daily = round(e["syllabus_hours"]/days_left,1)
-                analysis += f"  • {e['exam_name']}: {days_left}d left → ~{daily}h/day needed\n"
-            else:
-                analysis += f"  • {e['exam_name']}: {days_left} days left\n"
-
-    # Recommendations
-    analysis += "\n*💡 Recommendations:*\n"
-    if today_m := u.get("last_study_date",""):
-        if today_m == date.today().isoformat():
-            analysis += "✅ You studied today — keep it up!\n"
-
-    if subs and len(subs)>=2:
-        top = subs[0]["t"]
-        bottom = subs[-1]["t"]
-        if top > bottom*3 and total>0:
-            analysis += f"⚠️ Heavy focus on {subs[0]['subject']}. Balance with {subs[-1]['subject']}.\n"
-
-    if u["current_streak"]>0:
-        analysis += f"🔥 {u['current_streak']} day streak — don't break it!\n"
+        e = exams[0]
+        analysis += f"1️⃣ {e['subject']} — 45 min (closest exam priority)\n"
+    elif subs:
+        analysis += f"1️⃣ {subs[-1]['subject']} — 45 min (balance weaker subject)\n"
     else:
-        analysis += "🌱 Start a streak — study today!\n"
+        analysis += "1️⃣ Choose your hardest subject — 45 min\n"
+    analysis += f"2️⃣ Quick review — 25 min Pomodoro\nTarget today: *{target} minutes*\n"
+    if today_m >= target:
+        analysis += "\n✅ You already reached today's mission. Nice work!"
+    else:
+        analysis += f"\n⏳ Remaining today: *{fmt_duration(target - today_m)}*"
+    return analysis
 
-    analysis += f"\n🎯 *Daily Target:* {max(30,min(180,int(total/7)))} minutes"
-
-    await update.message.reply_text(analysis, parse_mode="Markdown", reply_markup=main_menu())
+async def plan_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 *Analyzing your progress...*", parse_mode="Markdown")
+    await update.message.reply_text(build_study_plan_text(update.effective_user.id), parse_mode="Markdown", reply_markup=main_menu())
 
 # ── Undo ───────────────────────────────────────────────────
 
-async def undo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
+def undo_last_log(uid):
     db = get_db()
-    last = db.execute("SELECT * FROM study_logs WHERE user_id=? ORDER BY id DESC LIMIT 1",(uid,)).fetchone()
+    last = db.execute("SELECT * FROM study_logs WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
     if not last:
-        await update.message.reply_text("Nothing to undo!", reply_markup=main_menu()); db.close(); return
-    db.execute("DELETE FROM study_logs WHERE id=?",(last["id"],))
-    db.execute("UPDATE users SET xp=xp-?, total_minutes=total_minutes-? WHERE user_id=?",
-        (last["xp_earned"],last["duration_minutes"],uid))
+        db.close()
+        return "Nothing to undo!"
+    today = date.today().isoformat()
+    log_date = (last["logged_at"] or today)[:10]
+    db.execute("DELETE FROM study_logs WHERE id=?", (last["id"],))
+    daily = db.execute("SELECT * FROM daily_stats WHERE user_id=? AND date=?", (uid, log_date)).fetchone()
+    if daily:
+        subjects = json.loads(daily["subjects"] or "{}")
+        subject_total = max(0, subjects.get(last["subject"], 0) - last["duration_minutes"])
+        if subject_total:
+            subjects[last["subject"]] = subject_total
+        else:
+            subjects.pop(last["subject"], None)
+        new_daily_minutes = max(0, daily["total_minutes"] - last["duration_minutes"])
+        new_daily_xp = max(0, daily["xp_earned"] - last["xp_earned"])
+        if new_daily_minutes == 0 and new_daily_xp == 0:
+            db.execute("DELETE FROM daily_stats WHERE user_id=? AND date=?", (uid, log_date))
+        else:
+            db.execute("UPDATE daily_stats SET total_minutes=?, xp_earned=?, subjects=? WHERE user_id=? AND date=?",
+                       (new_daily_minutes, new_daily_xp, json.dumps(subjects), uid, log_date))
+    u = db.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
+    new_xp = max(0, u["xp"] - last["xp_earned"]) if u else 0
+    new_total = max(0, u["total_minutes"] - last["duration_minutes"]) if u else 0
+    new_level = xp_to_level(new_xp)
+    last_remaining = db.execute("SELECT MAX(date(logged_at)) FROM study_logs WHERE user_id=?", (uid,)).fetchone()[0]
+    db.execute("UPDATE users SET xp=?, level=?, total_minutes=?, last_study_date=? WHERE user_id=?",
+               (new_xp, new_level, new_total, last_remaining, uid))
     db.commit(); db.close()
-    await update.message.reply_text(
-        f"↩️ Undid {fmt_duration(last['duration_minutes'])} of {last['subject']} (-{last['xp_earned']} XP)",
-        reply_markup=main_menu())
+    return f"↩️ Undid {fmt_duration(last['duration_minutes'])} of {last['subject']} (-{last['xp_earned']} XP)"
+
+async def undo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(undo_last_log(update.effective_user.id), reply_markup=main_menu())
 
 # ── Callback Handler ───────────────────────────────────────
 
@@ -414,17 +439,28 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "menu":
         await query.edit_message_text("📋 *Main Menu*", parse_mode="Markdown", reply_markup=main_menu())
     elif data == "today":
-        await today_cmd(query, ctx)
+        db = get_db(); today = date.today().isoformat()
+        dr = db.execute("SELECT * FROM daily_stats WHERE user_id=? AND date=?", (uid, today)).fetchone(); db.close()
+        tm = dr["total_minutes"] if dr else 0; xp = dr["xp_earned"] if dr else 0
+        await query.message.reply_text(f"📊 *Today's Study*\n\n⏱️ {fmt_duration(tm)} · ⭐ {xp} XP", parse_mode="Markdown", reply_markup=main_menu())
     elif data == "week":
-        await week_cmd(query, ctx)
+        db = get_db(); ws = (date.today()-timedelta(days=date.today().weekday())).isoformat()
+        rows = db.execute("SELECT * FROM daily_stats WHERE user_id=? AND date>=?", (uid, ws)).fetchall(); db.close()
+        await query.message.reply_text(f"📈 *Weekly Report*\n\n⏱️ {fmt_duration(sum(r['total_minutes'] for r in rows))} · ⭐ {sum(r['xp_earned'] for r in rows)} XP\n📅 {sum(1 for r in rows if r['total_minutes']>0)}/7 days studied", parse_mode="Markdown", reply_markup=main_menu())
     elif data == "stats":
-        await stats_cmd(query, ctx)
+        db = get_db(); u = db.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone(); db.close()
+        lvl, cur, nxt, pct = xp_progress(u["xp"]) if u else (1,0,100,0)
+        await query.message.reply_text(f"🎮 *Stats*\n\n🏅 {get_rank(lvl)} · Lv.{lvl}\n⭐ {u['xp'] if u else 0} XP ({cur}/{nxt})\n🔥 Streak: {u['current_streak'] if u else 0} days\n⏱️ Total: {fmt_duration(u['total_minutes'] if u else 0)}", parse_mode="Markdown", reply_markup=main_menu())
     elif data == "subjects":
-        await subjects_cmd(query, ctx)
+        db = get_db(); rows = db.execute("SELECT subject, SUM(duration_minutes) as t, COUNT(*) as n FROM study_logs WHERE user_id=? GROUP BY subject ORDER BY t DESC", (uid,)).fetchall(); db.close()
+        msg = "📚 *Subject Breakdown*\n\n" + ("\n".join(f"• {r['subject']}: {fmt_duration(r['t'])} ({r['n']} sessions)" for r in rows) if rows else "No subjects yet! Use /log to start.")
+        await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu())
     elif data == "exams":
-        await exams_cmd(query, ctx)
+        db = get_db(); rows = db.execute("SELECT * FROM exams WHERE user_id=? ORDER BY exam_date", (uid,)).fetchall(); db.close()
+        msg = "📅 *Exam Countdown*\n\n" + ("\n".join(f"• {r['exam_name']} ({r['subject']}) — {r['exam_date']}" for r in rows) if rows else "No exams added yet. Use /addexam.")
+        await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=main_menu())
     elif data == "plan":
-        await plan_cmd(query, ctx)
+        await query.message.reply_text(build_study_plan_text(uid), parse_mode="Markdown", reply_markup=main_menu())
     elif data == "log":
         await query.edit_message_text(
             "📝 *Log Study*\n\nReply with:\n`OOP 2h` or `/log DSA 45m`",
@@ -450,7 +486,7 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "login":
         t = secrets.token_urlsafe(16)
         db = get_db()
-        db.execute("INSERT OR REPLACE INTO login_tokens (token,user_id,used) VALUES (?,?,0)",(t,uid))
+        db.execute("INSERT OR REPLACE INTO login_tokens (token,user_id,created_at,used) VALUES (?,?,datetime('now'),0)",(t,uid))
         db.commit(); db.close()
         await query.edit_message_text(
             f"🔐 *Login Link*\n\n[Open Dashboard](https://kiritho.duckdns.org/study/auth/bot/{t})",

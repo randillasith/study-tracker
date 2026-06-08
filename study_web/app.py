@@ -19,6 +19,8 @@ app.secret_key = os.environ.get("SECRET_KEY", "study-tracker-web-secret-2026-ran
 BOT_TOKEN = os.environ.get("STUDY_BOT_TOKEN", "MISSING")
 BOT_USERNAME = "KirithoStudybot"
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+NOTIFY_KEY = os.environ.get("STUDY_NOTIFY_KEY", "")
+LOGIN_TOKEN_TTL_MINUTES = int(os.environ.get("LOGIN_TOKEN_TTL_MINUTES", "15"))
 DB_PATH = os.environ.get("STUDY_DB_PATH", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "study.db"))
 
 XP_PER_HOUR = 100
@@ -27,16 +29,24 @@ XP_PER_HOUR = 100
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        g.db = sqlite3.connect(DB_PATH, timeout=10)
         g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA busy_timeout=10000")
+        g.db.execute("PRAGMA journal_mode=WAL")
     return g.db
 
 @app.teardown_appcontext
 def close_db(exc):
-    g.pop("db", None)
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
 
 def init_db():
-    db = sqlite3.connect(DB_PATH)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    db = sqlite3.connect(DB_PATH, timeout=10)
+    db.execute("PRAGMA busy_timeout=10000")
+    db.execute("PRAGMA journal_mode=WAL")
     db.executescript("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT,
@@ -76,6 +86,11 @@ def init_db():
             user_id INTEGER, week_start TEXT, total_xp INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, week_start)
         );
+
+        CREATE TABLE IF NOT EXISTS login_tokens (
+            token TEXT PRIMARY KEY, user_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now')), used INTEGER DEFAULT 0
+        );
     """)
     db.commit()
     db.close()
@@ -113,14 +128,57 @@ def fmt_duration(m: int) -> str:
     h, r = divmod(m, 60)
     return f"{h}h {r}m" if r else f"{h}h"
 
+def get_exam_progress(uid: int) -> list[dict]:
+    db = get_db()
+    exams = db.execute("SELECT * FROM exams WHERE user_id=? ORDER BY exam_date", (uid,)).fetchall()
+    out = []
+    for e in exams:
+        studied = db.execute("SELECT COALESCE(SUM(duration_minutes),0) FROM study_logs WHERE user_id=? AND lower(subject)=lower(?)", (uid, e["subject"])).fetchone()[0] / 60
+        try:
+            days_left = (datetime.strptime(e["exam_date"], "%Y-%m-%d").date() - date.today()).days
+        except Exception:
+            days_left = None
+        remaining = max(0, float(e["syllabus_hours"] or 0) - studied)
+        hpd = round(remaining / days_left, 1) if days_left and days_left > 0 else 0
+        out.append({**dict(e), "studied_hours": round(studied, 1), "remaining_hours": round(remaining, 1), "days_left": days_left, "hours_per_day": hpd})
+    return out
+
+def build_study_mission(uid: int) -> dict:
+    db = get_db()
+    today = date.today().isoformat()
+    today_row = db.execute("SELECT COALESCE(total_minutes,0) FROM daily_stats WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    today_minutes = today_row[0] if today_row else 0
+    exams = get_exam_progress(uid)
+    subs = db.execute("SELECT subject, SUM(duration_minutes) AS total FROM study_logs WHERE user_id=? GROUP BY subject ORDER BY total ASC", (uid,)).fetchall()
+    tasks = []
+    if exams:
+        for e in sorted(exams, key=lambda x: (x["days_left"] if x["days_left"] is not None else 9999, -x["hours_per_day"]))[:2]:
+            minutes = max(25, min(90, int((e["hours_per_day"] or 0.75) * 60)))
+            tasks.append({"subject": e["subject"], "minutes": minutes, "reason": f"{e['exam_name']} in {e['days_left']} days; {e['remaining_hours']}h remaining"})
+    if len(tasks) < 2 and subs:
+        tasks.append({"subject": subs[0]["subject"], "minutes": 45, "reason": "lowest total study time; balance your week"})
+    if not tasks:
+        tasks.append({"subject": "Hardest subject", "minutes": 45, "reason": "start today with the subject that needs most attention"})
+    tasks.append({"subject": "Quick Review", "minutes": 25, "reason": "Pomodoro recap to strengthen memory"})
+    target = max(60, min(240, sum(t["minutes"] for t in tasks)))
+    return {"today_minutes": today_minutes, "target_minutes": target, "remaining_minutes": max(0, target - today_minutes), "tasks": tasks[:3]}
+
 # ─── Telegram Auth ──────────────────────────────────────────
 
 def verify_telegram_auth(data: dict) -> bool:
     received = data.pop("hash", None)
-    if not received: return False
+    if not received:
+        return False
+    try:
+        auth_date = datetime.fromtimestamp(int(data.get("auth_date", "0")))
+        if datetime.utcnow() - auth_date > timedelta(hours=24):
+            return False
+    except Exception:
+        return False
     check = "\n".join(f"{k}={v}" for k,v in sorted(data.items()))
     secret = hashlib.sha256(BOT_TOKEN.encode()).digest()
-    return hmac.new(secret, check.encode(), hashlib.sha256).hexdigest() == received
+    expected = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, received)
 
 def login_required(f):
     @wraps(f)
@@ -193,6 +251,8 @@ def dashboard():
 
     # Exams
     exams = db.execute("SELECT * FROM exams WHERE user_id=? ORDER BY exam_date",(uid,)).fetchall()
+    exam_progress = get_exam_progress(uid)
+    mission = build_study_mission(uid)
 
     # Leaderboard (all-time)
     lb = db.execute("""
@@ -213,7 +273,7 @@ def dashboard():
         user=user, rank=rank, rank_emoji=RANK_EMOJIS.get(rank,"📚"),
         progress=progress, today_minutes=today_minutes, today_xp=today_xp,
         week_minutes=week_m, week_xp=week_xp,
-        recent=recent, subjects=subs, exams=exams, leaderboard=lb,
+        recent=recent, subjects=subs, exams=exams, exam_progress=exam_progress, mission=mission, leaderboard=lb,
         chart_labels=json.dumps(cl), chart_data=json.dumps(cd_labels),
         fmt_duration=fmt_duration, gemini_key_available=bool(GEMINI_KEY),
         datetime=datetime, today=date.today())
@@ -284,57 +344,71 @@ def analytics():
 @login_required
 def pomodoro_complete():
     uid = session["user_id"]
-    data = request.get_json()
-    duration = int(data.get("minutes", 25))
+    data = request.get_json(silent=True) or {}
+    try:
+        duration = int(data.get("minutes", 25))
+    except Exception:
+        return jsonify({"error": "Invalid minutes"}), 400
+    session_type = (data.get("type") or data.get("duration_type") or "focus").lower()
+    if duration < 1 or duration > 180 or session_type not in {"focus", "break"}:
+        return jsonify({"error": "Invalid pomodoro session"}), 400
+
     db = get_db()
-    user = db.execute("SELECT * FROM users WHERE user_id=?",(uid,)).fetchone()
+    user = db.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
     today = date.today().isoformat()
 
-    # Streak
+    xp_earned = 0
     streak = user["current_streak"]
-    if user["last_study_date"]:
-        ld = date.fromisoformat(user["last_study_date"])
-        diff = (date.today()-ld).days
-        if diff == 1: streak += 1
-        elif diff > 1: streak = 1
-    else: streak = 1
+    longest = user["longest_streak"]
+    new_xp = user["xp"]
+    new_lvl = user["level"]
+    today_minutes_after = 0
 
-    xp_earned = calc_xp(duration, streak)
-    longest = max(user["longest_streak"], streak)
+    db.execute("INSERT INTO pomodoro_sessions (user_id, started_at, completed_at, duration_type, completed, xp_earned) VALUES (?, datetime('now', ?), datetime('now'), ?, 1, ?)",
+               (uid, f"-{duration} minutes", session_type, 0))
 
-    # Log session
-    db.execute("INSERT INTO pomodoro_sessions (user_id, started_at, completed_at, duration_type, completed, xp_earned) VALUES (?, datetime('now','-25 minutes'), datetime('now'), 'focus', 1, ?)",
-        (uid, xp_earned))
-    db.execute("INSERT INTO study_logs (user_id, subject, duration_minutes, xp_earned, note) VALUES (?,?,?,?,?)",
-        (uid, "Pomodoro", duration, xp_earned, f"Pomodoro session {duration}min"))
-
-    # Daily stats
-    daily = db.execute("SELECT * FROM daily_stats WHERE user_id=? AND date=?",(uid,today)).fetchone()
-    subs = json.loads(daily["subjects"]) if daily else {}
-    subs["Pomodoro"] = subs.get("Pomodoro", 0) + duration
-    db.execute("""INSERT INTO daily_stats (user_id, date, total_minutes, subjects, xp_earned)
-        VALUES (?,?,?,?,?) ON CONFLICT(user_id,date) DO UPDATE SET
-        total_minutes=total_minutes+?, subjects=?, xp_earned=xp_earned+?""",
-        (uid,today,duration,json.dumps(subs),xp_earned,duration,json.dumps(subs),xp_earned))
-
-    # User update
-    new_xp = user["xp"] + xp_earned
-    new_lvl = xp_to_level(new_xp)
-    db.execute("UPDATE users SET xp=?,level=?,current_streak=?,longest_streak=?,last_study_date=?,total_minutes=total_minutes+? WHERE user_id=?",
-        (new_xp,new_lvl,streak,longest,today,duration,uid))
+    if session_type == "focus":
+        if user["last_study_date"]:
+            ld = date.fromisoformat(user["last_study_date"])
+            diff = (date.today() - ld).days
+            if diff == 1:
+                streak += 1
+            elif diff > 1:
+                streak = 1
+        else:
+            streak = 1
+        xp_earned = calc_xp(duration, streak)
+        longest = max(user["longest_streak"], streak)
+        db.execute("UPDATE pomodoro_sessions SET xp_earned=? WHERE id=last_insert_rowid()", (xp_earned,))
+        db.execute("INSERT INTO study_logs (user_id, subject, duration_minutes, xp_earned, note) VALUES (?,?,?,?,?)",
+                   (uid, "Pomodoro", duration, xp_earned, f"Pomodoro focus session {duration}min"))
+        daily = db.execute("SELECT * FROM daily_stats WHERE user_id=? AND date=?", (uid, today)).fetchone()
+        subs = json.loads(daily["subjects"]) if daily else {}
+        subs["Pomodoro"] = subs.get("Pomodoro", 0) + duration
+        db.execute("""INSERT INTO daily_stats (user_id, date, total_minutes, subjects, xp_earned)
+            VALUES (?,?,?,?,?) ON CONFLICT(user_id,date) DO UPDATE SET
+            total_minutes=total_minutes+?, subjects=?, xp_earned=xp_earned+?""",
+            (uid, today, duration, json.dumps(subs), xp_earned, duration, json.dumps(subs), xp_earned))
+        new_xp = user["xp"] + xp_earned
+        new_lvl = xp_to_level(new_xp)
+        db.execute("UPDATE users SET xp=?,level=?,current_streak=?,longest_streak=?,last_study_date=?,total_minutes=total_minutes+? WHERE user_id=?",
+                   (new_xp, new_lvl, streak, longest, today, duration, uid))
+        today_minutes_after = (daily["total_minutes"] if daily else 0) + duration
     db.commit()
 
-    return jsonify({"ok":True, "xp_earned":xp_earned, "streak":streak, "new_xp":new_xp,
-        "level_up":new_lvl>user["level"], "new_level":new_lvl if new_lvl>user["level"] else None,
-        "rank":get_rank(new_lvl), "today_minutes":(daily["total_minutes"] if daily else 0)+duration})
+    return jsonify({"ok": True, "session_type": session_type, "xp_earned": xp_earned, "streak": streak, "new_xp": new_xp,
+        "level_up": new_lvl > user["level"], "new_level": new_lvl if new_lvl > user["level"] else None,
+        "rank": get_rank(new_lvl), "today_minutes": today_minutes_after})
 
-# ─── API: Log ───────────────────────────────────────────────
+# ─── API: Log# ─── API: Log ───────────────────────────────────────────────
 
 @app.route("/api/log", methods=["POST"])
 @login_required
 def api_log():
     uid = session["user_id"]
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     subject = data.get("subject","").strip()
     try: minutes = int(data.get("minutes",0))
     except: return jsonify({"error":"Invalid minutes"}),400
@@ -392,9 +466,12 @@ def api_exams():
 @login_required
 def api_exam_add():
     uid = session["user_id"]
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     subj, name, edate = data.get("subject",""), data.get("name",""), data.get("date","")
-    hours = float(data.get("hours", 0))
+    try:
+        hours = float(data.get("hours", 0))
+    except Exception:
+        return jsonify({"error":"Invalid hours"}),400
     if not all([subj,name,edate]): return jsonify({"error":"Missing fields"}),400
     db = get_db()
     db.execute("INSERT INTO exams (user_id,subject,exam_name,exam_date,syllabus_hours) VALUES (?,?,?,?,?)",
@@ -539,6 +616,12 @@ def bot_login(token):
     row = db.execute("SELECT * FROM login_tokens WHERE token=? AND used=0", (token,)).fetchone()
     if not row:
         return "<h2>Invalid or expired login link.</h2>", 403
+    try:
+        created_at = datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S")
+        if datetime.utcnow() - created_at > timedelta(minutes=LOGIN_TOKEN_TTL_MINUTES):
+            return "<h2>Invalid or expired login link.</h2>", 403
+    except Exception:
+        return "<h2>Invalid or expired login link.</h2>", 403
 
     db.execute("UPDATE login_tokens SET used=1 WHERE token=?", (token,))
     user = db.execute("SELECT * FROM users WHERE user_id=?", (row["user_id"],)).fetchone()
@@ -561,6 +644,8 @@ def bot_login(token):
 @app.route("/api/notify/check")
 def notify_check():
     """Called by n8n cron to find users who haven't studied today."""
+    if NOTIFY_KEY and request.headers.get("X-Study-Notify-Key") != NOTIFY_KEY:
+        return jsonify({"error": "Forbidden"}), 403
     db = get_db()
     today = date.today().isoformat()
     at_risk = db.execute("""
