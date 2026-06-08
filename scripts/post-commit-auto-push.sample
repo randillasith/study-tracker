@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Auto-push Study Tracker commits to GitHub.
+# Installed as .git/hooks/post-commit on this VPS.
+
+set -u
+cd "$(git rev-parse --show-toplevel)" || exit 0
+
+REMOTE="origin"
+BRANCH="main"
+LOG_FILE=".git/auto-push.log"
+
+{
+  echo "[$(date -Is)] post-commit auto-push started"
+  git push -u "$REMOTE" "$BRANCH"
+  echo "[$(date -Is)] post-commit auto-push finished"
+} >> "$LOG_FILE" 2>&1 || {
+  echo "[$(date -Is)] auto-push failed; see $LOG_FILE" >> "$LOG_FILE"
+  exit 0
+}
